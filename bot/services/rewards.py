@@ -208,6 +208,7 @@ class RewardsService:
         round_id: str,
         symbol: str,
         multiplier: float,
+        combo_details: dict[str, Any] | None = None,
     ) -> float:
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -219,6 +220,8 @@ class RewardsService:
             if float(user["wallet_balance"]) < bet_amount:
                 raise ValueError("Insufficient funds")
 
+            metadata = {"symbol": symbol, "multiplier": multiplier, "combo": combo_details or {}}
+
             self._create_wallet_transaction(
                 conn=conn,
                 user_id=user_id,
@@ -227,7 +230,7 @@ class RewardsService:
                 idempotency_key=f"spin:{round_id}:bet",
                 reference_type="spin_round",
                 reference_id=round_id,
-                metadata={"symbol": symbol, "multiplier": multiplier},
+                metadata=metadata,
             )
             if payout > 0:
                 self._create_wallet_transaction(
@@ -238,7 +241,7 @@ class RewardsService:
                     idempotency_key=f"spin:{round_id}:win",
                     reference_type="spin_round",
                     reference_id=round_id,
-                    metadata={"symbol": symbol, "multiplier": multiplier},
+                    metadata=metadata,
                 )
 
             self._record_spins(conn, user_id=user_id, spins=1, total_bet_amount=float(bet_amount))

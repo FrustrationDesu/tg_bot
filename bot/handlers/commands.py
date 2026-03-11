@@ -100,29 +100,44 @@ async def spin_handler(message: Message, rewards: RewardsService, settings: Sett
     amount = payload
     result = spin_slot()
     payout = int(amount * result.multiplier)
+    primary_symbol = result.win_lines[0]["symbol"] if result.win_lines else "—"
     round_id = f"{telegram_id}:{uuid4().hex}"
     new_balance = rewards.process_spin(
         user_id=user_id,
         bet_amount=amount,
         payout=payout,
         round_id=round_id,
-        symbol=result.symbol,
+        symbol=primary_symbol,
         multiplier=result.multiplier,
+        combo_details={
+            "reels": result.reels,
+            "win_lines": result.win_lines,
+            "symbol_hits": result.symbol_hits,
+        },
     )
 
     logger.info(
         "Spin processed user_id=%s amount=%s symbol=%s multiplier=%.2f payout=%s balance=%s",
         user_id,
         amount,
-        result.symbol,
+        primary_symbol,
         result.multiplier,
         payout,
         new_balance,
     )
 
+    grid_lines = [" ".join(row) for row in result.grid]
+    wins = "\n".join(
+        f"- {line['line']}: {line['symbol']} x{line['multiplier']}"
+        for line in result.win_lines
+    ) or "- нет"
+
     await message.answer(
-        f"Выпало {result.symbol}\n"
-        f"Множитель: x{result.multiplier}\n"
-        f"Выплата: {payout}\n"
-        f"Новый баланс: {new_balance}"
+        "Поле:\n"
+        + "\n".join(grid_lines)
+        + "\n\nЛинии выигрыша:\n"
+        + wins
+        + f"\n\nОбщий множитель: x{result.multiplier}"
+        + f"\nВыплата: {payout}"
+        + f"\nНовый баланс: {new_balance}"
     )
