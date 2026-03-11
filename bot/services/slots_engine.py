@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import random
 import uuid
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,10 +30,12 @@ _PAYTABLE_PATH = Path(__file__).resolve().parents[1] / "data" / "paytable.json"
 @dataclass(slots=True)
 class PayoutLine:
     line_index: int
+    line_name: str
     symbol: str
     count: int
     multiplier: float
     amount: float
+    positions: list[tuple[int, int]]
 
 
 @dataclass(slots=True)
@@ -50,8 +53,11 @@ class RTPSnapshot:
 class SpinResult:
     round_id: str
     timestamp: str
-    reel: list[list[str]]
-    paylines: list[PayoutLine]
+    reels: list[list[str]]
+    grid: list[list[str]]
+    win_lines: list[PayoutLine]
+    multiplier: float
+    symbol_hits: dict[str, int]
     bet: float
     win_amount: float
     balance_before: float
@@ -65,59 +71,84 @@ class SlotsEngine:
     symbols: list[str] = field(default_factory=lambda: list(SYMBOLS))
     symbol_weights: dict[str, int] = field(default_factory=lambda: dict(SYMBOL_WEIGHTS))
     _paytable: dict[str, dict[int, float]] = field(init=False, repr=False)
+    _line_definitions: list[tuple[str, list[tuple[int, int]]]] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        self._paytable = self._load_paytable()
+        self._paytable, self._line_definitions = self._load_paytable()
 
-    def _load_paytable(self) -> dict[str, dict[int, float]]:
+    def _load_paytable(self) -> tuple[dict[str, dict[int, float]], list[tuple[str, list[tuple[int, int]]]]]:
         with self.paytable_path.open("r", encoding="utf-8") as f:
             raw = json.load(f)
 
+        symbols_raw = raw.get("symbols", raw)
         paytable: dict[str, dict[int, float]] = {}
-        for symbol, payouts in raw.items():
+        for symbol, payouts in symbols_raw.items():
             paytable[symbol] = {int(k): float(v) for k, v in payouts.items()}
-        return paytable
 
-    def _generate_reel(self, rows: int, cols: int) -> list[list[str]]:
+        lines_raw = raw.get("lines") or {"center": [[1, 0], [1, 1], [1, 2]]}
+        lines: list[tuple[str, list[tuple[int, int]]]] = []
+        for name, positions in lines_raw.items():
+            coords = [(int(r), int(c)) for r, c in positions]
+            if coords:
+                lines.append((name, coords))
+
+        return paytable, lines
+
+    def _generate_reel(self, rows: int, cols: int, rng: random.Random | None = None) -> list[list[str]]:
         weighted_pool = [self.symbol_weights[s] for s in self.symbols]
+        roll_rng = rng or random
         return [
-            random.choices(self.symbols, weights=weighted_pool, k=cols)
+            roll_rng.choices(self.symbols, weights=weighted_pool, k=cols)
             for _ in range(rows)
         ]
 
-    def _calculate_paylines(self, reel: list[list[str]], bet: float) -> tuple[list[PayoutLine], float]:
+    @staticmethod
+    def _consecutive_match(symbols: list[str]) -> tuple[str, int]:
+        first_symbol = symbols[0]
+        consecutive = 1
+        for symbol in symbols[1:]:
+            if symbol == first_symbol:
+                consecutive += 1
+            else:
+                break
+        return first_symbol, consecutive
+
+    def _calculate_paylines(
+        self,
+        reel: list[list[str]],
+        bet: float,
+    ) -> tuple[list[PayoutLine], float, float, dict[str, int]]:
         paylines: list[PayoutLine] = []
         total_win = 0.0
+        total_multiplier = 0.0
+        hit_counter: Counter[str] = Counter()
 
-        for idx, row in enumerate(reel):
-            if not row:
-                continue
+        for idx, (line_name, positions) in enumerate(self._line_definitions):
+            symbols_on_line = [reel[row][col] for row, col in positions]
+            symbol, consecutive = self._consecutive_match(symbols_on_line)
 
-            first_symbol = row[0]
-            consecutive = 1
-            for symbol in row[1:]:
-                if symbol == first_symbol:
-                    consecutive += 1
-                else:
-                    break
-
-            multiplier = self._paytable.get(first_symbol, {}).get(consecutive, 0.0)
+            multiplier = self._paytable.get(symbol, {}).get(consecutive, 0.0)
             if multiplier <= 0:
                 continue
 
+            line_positions = positions[:consecutive]
             line_win = bet * multiplier
             paylines.append(
                 PayoutLine(
                     line_index=idx,
-                    symbol=first_symbol,
+                    line_name=line_name,
+                    symbol=symbol,
                     count=consecutive,
                     multiplier=multiplier,
                     amount=round(line_win, 2),
+                    positions=line_positions,
                 )
             )
             total_win += line_win
+            total_multiplier += multiplier
+            hit_counter[symbol] += consecutive
 
-        return paylines, round(total_win, 2)
+        return paylines, round(total_win, 2), round(total_multiplier, 2), dict(hit_counter)
 
     def _build_rtp_snapshot(self, user_state: dict[str, Any]) -> RTPSnapshot:
         stats = user_state.setdefault("stats", {})
@@ -146,7 +177,7 @@ class SlotsEngine:
             alert_message=message,
         )
 
-    def spin(self, bet: float, user_state: dict[str, Any]) -> SpinResult:
+    def spin(self, bet: float, user_state: dict[str, Any], rng: random.Random | None = None) -> SpinResult:
         if bet <= 0:
             raise ValueError("Bet must be positive")
 
@@ -162,8 +193,8 @@ class SlotsEngine:
         balance_before = round(balance, 2)
         balance_after_bet = balance_before - bet
 
-        reel = self._generate_reel(rows=rows, cols=cols)
-        paylines, win_amount = self._calculate_paylines(reel=reel, bet=bet)
+        reel = self._generate_reel(rows=rows, cols=cols, rng=rng)
+        paylines, win_amount, multiplier, symbol_hits = self._calculate_paylines(reel=reel, bet=bet)
 
         final_balance = round(balance_after_bet + win_amount, 2)
 
@@ -179,8 +210,11 @@ class SlotsEngine:
         return SpinResult(
             round_id=round_id,
             timestamp=timestamp,
-            reel=reel,
-            paylines=paylines,
+            reels=reel,
+            grid=reel,
+            win_lines=paylines,
+            multiplier=multiplier,
+            symbol_hits=symbol_hits,
             bet=round(bet, 2),
             win_amount=win_amount,
             balance_before=balance_before,
