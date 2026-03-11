@@ -1,29 +1,75 @@
-# tg_bot wallet backend
+# tg_bot
 
-Реализован backend-каркас для PostgreSQL с Alembic, транзакционным учётом ставок/выигрышей, аудитом и anti-fraud правилами.
+Минимальный Telegram-бот (слот-механика) на `aiogram`.
 
-## Что сделано
-- PostgreSQL как целевая БД (`settings.database_url`).
-- Alembic миграция `0001_wallet_ledger_audit`.
-- Транзакционная обработка `/spin`:
-  - `SELECT ... FOR UPDATE` блокирует кошелёк пользователя.
-  - уникальные ключи (`external_id`, `idempotency_key`, `uq_round_tx_type`) исключают двойное списание.
-- Типы транзакций:
-  - `BET_DEBIT`
-  - `SPIN_WIN_CREDIT`
-  - `DAILY_BONUS_CREDIT`
-  - `MISSION_REWARD_CREDIT`
-  - `CASHBACK_CREDIT`
-- Аудит:
-  - неизменяемый журнал `audit_logs` c hash-chain.
-  - админский экспорт спорных раундов `/admin/disputed-rounds`.
-- Лимиты и фрод-правила:
-  - rate limit на `/spin` по количеству раундов в минуту.
-  - max bet по уровню пользователя.
+## Возможности
 
-## Запуск
+- Команды:
+  - `/start` — приветствие и подсказка по командам.
+  - `/balance` — текущий баланс пользователя.
+  - `/spin <amount>` — спин со ставкой и расчетом выплаты.
+- Валидация ставок:
+  - только целое число;
+  - между `MIN_BET` и `MAX_BET`;
+  - не больше текущего баланса.
+- Централизованный логгер.
+- Поддержка запуска через **polling** (по умолчанию) и **webhook**.
+
+## Структура
+
+```text
+bot/
+  main.py
+  config.py
+  logger.py
+  handlers/
+    commands.py
+  services/
+    game.py
+    validation.py
+    wallet.py
+```
+
+## Локальный запуск (polling)
+
+1. Создайте и активируйте виртуальное окружение.
+2. Установите зависимости:
+
 ```bash
 pip install -r requirements.txt
-alembic upgrade head
-uvicorn app.main:app --reload
 ```
+
+3. Подготовьте `.env` на основе примера:
+
+```bash
+cp .env.example .env
+```
+
+4. Заполните минимум:
+
+- `BOT_TOKEN`
+- `DB_URL`
+- `MIN_BET`
+- `MAX_BET`
+
+5. Запустите:
+
+```bash
+python -m bot.main
+```
+
+## Прод-запуск (webhook)
+
+Для webhook установите переменные:
+
+- `WEBHOOK_URL` — публичный HTTPS URL, например `https://bot.example.com`
+- `WEBHOOK_PATH` — путь webhook, например `/webhook`
+- `HOST` и `PORT` — адрес и порт локального HTTP-сервера
+
+Пример запуска:
+
+```bash
+WEBHOOK_URL=https://bot.example.com HOST=0.0.0.0 PORT=8080 python -m bot.main
+```
+
+Важно: сервер должен быть доступен из интернета по HTTPS.
