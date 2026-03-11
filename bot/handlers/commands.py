@@ -16,12 +16,27 @@ router = Router()
 
 
 @router.message(Command("start"))
-async def start_handler(message: Message) -> None:
+async def start_handler(message: Message, rewards: RewardsService) -> None:
+    telegram_id = int(message.from_user.id)
+    username = getattr(message.from_user, "username", None)
+    user = rewards.get_or_create_user(telegram_id=telegram_id, username=username)
+    balance = rewards.get_balance(user["id"])
+    has_welcome = rewards.has_welcome_bonus(telegram_id)
+
+    cta = "🎁 Забрать ежедневный бонус: /daily"
+    if balance <= 0:
+        cta = "🆓 Получить стартовый бонус: /start"
+        if has_welcome:
+            cta = "🎁 Забрать ежедневный бонус: /daily"
+
     await message.answer(
         "Привет! Это слот-бот.\n"
+        f"Ваш баланс: {balance:.2f}\n\n"
         "Команды:\n"
         "/balance — показать баланс\n"
-        "/spin <ставка> — сделать спин"
+        "/spin <ставка> — сделать спин\n"
+        "/daily — ежедневный бонус\n\n"
+        f"{cta}"
     )
 
 
@@ -45,6 +60,25 @@ async def balance_handler(message: Message, rewards: RewardsService) -> None:
     await message.answer(f"Ваш баланс: {balance}")
 
 
+
+
+@router.message(F.text == "🎰 Спин")
+async def spin_button_handler(message: Message, rewards: RewardsService) -> None:
+    telegram_id = int(message.from_user.id)
+    username = getattr(message.from_user, "username", None)
+    user = rewards.get_or_create_user(telegram_id=telegram_id, username=username)
+    balance = rewards.get_balance(user["id"])
+
+    if balance <= 0:
+        await message.answer(
+            "Баланс пустой.\n"
+            "🆓 Получить стартовый бонус: /start\n"
+            "🎁 Забрать ежедневный бонус: /daily"
+        )
+        return
+
+    await message.answer("Введите ставку командой: /spin <ставка>")
+
 @router.message(Command("spin"))
 async def spin_handler(message: Message, rewards: RewardsService, settings: Settings) -> None:
     args = (message.text or "").split(maxsplit=1)
@@ -58,38 +92,53 @@ async def spin_handler(message: Message, rewards: RewardsService, settings: Sett
 
     is_valid, payload = validate_bet(raw_amount, settings.min_bet, settings.max_bet, current_balance)
     if not is_valid:
+        if current_balance <= 0:
+            await message.answer(f"{payload}\n\n🆓 Получить стартовый бонус: /start\n🎁 Забрать ежедневный бонус: /daily")
+            return
         await message.answer(payload)
         return
 
     amount = payload
     result = spin_slot()
     payout = int(amount * result.multiplier)
+    primary_symbol = result.win_lines[0]["symbol"] if result.win_lines else "—"
     round_id = f"{telegram_id}:{uuid4().hex}"
     new_balance = rewards.process_spin(
         user_id=user_id,
         bet_amount=amount,
         payout=payout,
         round_id=round_id,
-        symbol=result.symbol,
+        symbol=primary_symbol,
         multiplier=result.multiplier,
+        combo_details={
+            "reels": result.reels,
+            "win_lines": result.win_lines,
+            "symbol_hits": result.symbol_hits,
+        },
     )
 
     logger.info(
         "Spin processed user_id=%s amount=%s symbol=%s multiplier=%.2f payout=%s balance=%s",
         user_id,
         amount,
-        result.symbol,
+        primary_symbol,
         result.multiplier,
         payout,
         new_balance,
     )
 
+    grid_lines = [" ".join(row) for row in result.grid]
+    wins = "\n".join(
+        f"- {line['line']}: {line['symbol']} x{line['multiplier']}"
+        for line in result.win_lines
+    ) or "- нет"
+
     await message.answer(
-        render_spin_result(
-            reel_symbol=result.symbol,
-            payout=payout,
-            balance_before=current_balance,
-            balance_after=new_balance,
-        ),
-        reply_markup=SPIN_ACTION_KEYBOARD,
+        "Поле:\n"
+        + "\n".join(grid_lines)
+        + "\n\nЛинии выигрыша:\n"
+        + wins
+        + f"\n\nОбщий множитель: x{result.multiplier}"
+        + f"\nВыплата: {payout}"
+        + f"\nНовый баланс: {new_balance}"
     )
