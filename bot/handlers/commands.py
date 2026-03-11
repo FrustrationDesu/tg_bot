@@ -1,4 +1,5 @@
 import logging
+from uuid import uuid4
 
 from aiogram import Router
 from aiogram.filters import Command
@@ -8,7 +9,7 @@ from aiogram.types import Message
 from bot.config import Settings
 from bot.services.game import spin_slot
 from bot.services.validation import validate_bet
-from bot.services.wallet import WalletService
+from bot.services.rewards import RewardsService
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -36,18 +37,24 @@ async def text_start_handler(message: Message) -> None:
 
 
 @router.message(Command("balance"))
-async def balance_handler(message: Message, wallet: WalletService) -> None:
-    balance = wallet.get_balance(message.from_user.id)
+async def balance_handler(message: Message, rewards: RewardsService) -> None:
+    telegram_id = int(message.from_user.id)
+    username = getattr(message.from_user, "username", None)
+    user = rewards.get_or_create_user(telegram_id=telegram_id, username=username)
+    balance = rewards.get_balance(user["id"])
     await message.answer(f"Ваш баланс: {balance}")
 
 
 @router.message(Command("spin"))
-async def spin_handler(message: Message, wallet: WalletService, settings: Settings) -> None:
+async def spin_handler(message: Message, rewards: RewardsService, settings: Settings) -> None:
     args = (message.text or "").split(maxsplit=1)
     raw_amount = args[1] if len(args) > 1 else None
 
-    user_id = message.from_user.id
-    current_balance = wallet.get_balance(user_id)
+    telegram_id = int(message.from_user.id)
+    username = getattr(message.from_user, "username", None)
+    user = rewards.get_or_create_user(telegram_id=telegram_id, username=username)
+    user_id = user["id"]
+    current_balance = int(rewards.get_balance(user_id))
 
     is_valid, payload = validate_bet(raw_amount, settings.min_bet, settings.max_bet, current_balance)
     if not is_valid:
@@ -57,7 +64,15 @@ async def spin_handler(message: Message, wallet: WalletService, settings: Settin
     amount = payload
     result = spin_slot()
     payout = int(amount * result.multiplier)
-    new_balance = wallet.apply_bet(user_id=user_id, amount=amount, payout=payout)
+    round_id = f"{telegram_id}:{uuid4().hex}"
+    new_balance = rewards.process_spin(
+        user_id=user_id,
+        bet_amount=amount,
+        payout=payout,
+        round_id=round_id,
+        symbol=result.symbol,
+        multiplier=result.multiplier,
+    )
 
     logger.info(
         "Spin processed user_id=%s amount=%s symbol=%s multiplier=%.2f payout=%s balance=%s",
