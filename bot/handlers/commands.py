@@ -1,9 +1,8 @@
 import logging
 from uuid import uuid4
 
-from aiogram import Router
+from aiogram import F, Router
 from aiogram.filters import Command
-from aiogram.filters.text import Text
 from aiogram.types import Message
 
 from bot.config import Settings
@@ -25,7 +24,7 @@ async def start_handler(message: Message) -> None:
     )
 
 
-@router.message(Text(text=["старт", "start"], ignore_case=True))
+@router.message(F.text.casefold().in_({"старт", "start"}))
 async def text_start_handler(message: Message) -> None:
     await message.answer(
         "Привет! Это слот-бот.\n"
