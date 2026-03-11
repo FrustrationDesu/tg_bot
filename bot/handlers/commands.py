@@ -7,6 +7,7 @@ from aiogram.types import Message
 
 from bot.config import Settings
 from bot.services.game import spin_slot
+from bot.services.presenter import SPIN_ACTION_KEYBOARD, render_spin_result
 from bot.services.validation import validate_bet
 from bot.services.rewards import RewardsService
 
