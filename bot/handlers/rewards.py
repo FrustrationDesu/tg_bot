@@ -1,25 +1,30 @@
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Any
+from datetime import datetime, timezone
+
+from aiogram import Router
+from aiogram.filters import Command
+from aiogram.types import Message
 
 from bot.services.rewards import RewardsService, format_missions
 
+router = Router()
 
-def _telegram_user(update: Any) -> tuple[int, str | None]:
-    user = update.effective_user
+
+def _telegram_user(message: Message) -> tuple[int, str | None]:
+    user = message.from_user
     return int(user.id), getattr(user, "username", None)
 
 
-async def rewards_command(update: Any, context: Any) -> None:
-    telegram_id, username = _telegram_user(update)
-    service: RewardsService = context.bot_data["rewards_service"]
-    user = service.get_or_create_user(telegram_id=telegram_id, username=username)
-    service.run_multiaccount_heuristics(user["id"])
+@router.message(Command("rewards"))
+async def rewards_command(message: Message, rewards: RewardsService) -> None:
+    telegram_id, username = _telegram_user(message)
+    user = rewards.get_or_create_user(telegram_id=telegram_id, username=username)
+    rewards.run_multiaccount_heuristics(user["id"])
 
-    data = service.get_rewards_snapshot(user["id"])
+    data = rewards.get_rewards_snapshot(user["id"])
     if not data:
-        await update.message.reply_text("Не удалось загрузить профиль наград.")
+        await message.answer("Не удалось загрузить профиль наград.")
         return
 
     text = (
@@ -28,64 +33,47 @@ async def rewards_command(update: Any, context: Any) -> None:
         f"👑 VIP: {data['vip']} (turnover: {data['vip_turnover']:.2f})\n"
         f"⚠️ Multiaccount flag: {'yes' if data['flagged_multiaccount'] else 'no'}"
     )
-    await update.message.reply_text(text)
+    await message.answer(text)
 
 
-async def daily_command(update: Any, context: Any) -> None:
-    telegram_id, username = _telegram_user(update)
-    service: RewardsService = context.bot_data["rewards_service"]
-    user = service.get_or_create_user(telegram_id=telegram_id, username=username)
-    service.run_multiaccount_heuristics(user["id"])
+@router.message(Command("daily"))
+async def daily_command(message: Message, rewards: RewardsService) -> None:
+    telegram_id, username = _telegram_user(message)
+    user = rewards.get_or_create_user(telegram_id=telegram_id, username=username)
+    rewards.run_multiaccount_heuristics(user["id"])
 
-    idem = f"daily:{telegram_id}:{datetime.utcnow().date().isoformat()}"
-    ok, message, amount = service.claim_daily_bonus(user["id"], idem)
+    idem = f"daily:{telegram_id}:{datetime.now(timezone.utc).date().isoformat()}"
+    ok, response_message, amount = rewards.claim_daily_bonus(user["id"], idem)
     prefix = "✅" if ok else "⚠️"
-    await update.message.reply_text(f"{prefix} {message}. Amount: {amount:.2f}")
+    await message.answer(f"{prefix} {response_message}. Amount: {amount:.2f}")
 
 
-async def missions_command(update: Any, context: Any) -> None:
-    telegram_id, username = _telegram_user(update)
-    service: RewardsService = context.bot_data["rewards_service"]
-    user = service.get_or_create_user(telegram_id=telegram_id, username=username)
+@router.message(Command("missions"))
+async def missions_command(message: Message, rewards: RewardsService) -> None:
+    telegram_id, username = _telegram_user(message)
+    user = rewards.get_or_create_user(telegram_id=telegram_id, username=username)
 
-    period = datetime.utcnow().date().isoformat()
-    payouts = service.claim_mission_rewards(user["id"], period, f"mission:{telegram_id}:{period}")
-    snapshot = service.get_rewards_snapshot(user["id"])
+    period = datetime.now(timezone.utc).date().isoformat()
+    payouts = rewards.claim_mission_rewards(user["id"], period, f"mission:{telegram_id}:{period}")
+    snapshot = rewards.get_rewards_snapshot(user["id"])
 
     msg = ["🎯 Missions:\n" + format_missions(snapshot.get("missions", []))]
     if payouts:
         paid = ", ".join(f"{p['mission']} +{p['amount']:.2f}" for p in payouts)
         msg.append(f"\n✅ Claimed: {paid}")
 
-    await update.message.reply_text("\n".join(msg))
+    await message.answer("\n".join(msg))
 
 
-async def vip_command(update: Any, context: Any) -> None:
-    telegram_id, username = _telegram_user(update)
-    service: RewardsService = context.bot_data["rewards_service"]
-    user = service.get_or_create_user(telegram_id=telegram_id, username=username)
-    data = service.get_rewards_snapshot(user["id"])
+@router.message(Command("vip"))
+async def vip_command(message: Message, rewards: RewardsService) -> None:
+    telegram_id, username = _telegram_user(message)
+    user = rewards.get_or_create_user(telegram_id=telegram_id, username=username)
+    data = rewards.get_rewards_snapshot(user["id"])
 
     text = (
         f"👑 Current VIP: {data.get('vip', 'Bronze')}\n"
         f"📊 Turnover: {data.get('vip_turnover', 0):.2f}\n"
         "VIP upgrades automatically based on betting turnover."
     )
-    await update.message.reply_text(text)
-
-
-def register_rewards_handlers(application: Any) -> None:
-    """
-    Optional helper for python-telegram-bot applications.
-
-    Example:
-        from telegram.ext import CommandHandler
-        application.add_handler(CommandHandler("rewards", rewards_command))
-    """
-
-    from telegram.ext import CommandHandler
-
-    application.add_handler(CommandHandler("rewards", rewards_command))
-    application.add_handler(CommandHandler("daily", daily_command))
-    application.add_handler(CommandHandler("missions", missions_command))
-    application.add_handler(CommandHandler("vip", vip_command))
+    await message.answer(text)

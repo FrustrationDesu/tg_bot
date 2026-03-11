@@ -1,34 +1,30 @@
 # tg_bot
 
-Минимальный Telegram-бот (слот-механика) на `aiogram`.
+Telegram-бот на **aiogram** с командами слотов и системы наград.
 
 ## Возможности
 
-- Команды:
+- Базовые команды:
   - `/start` — приветствие и подсказка по командам.
   - `/balance` — текущий баланс пользователя.
   - `/spin <amount>` — спин со ставкой и расчетом выплаты.
+- Награды и прогресс:
+  - `/rewards` — сводка по балансу, стрику, VIP и антиабуз-флагу.
+  - `/daily` — ежедневный бонус.
+  - `/missions` — прогресс миссий и клейм наград.
+  - `/vip` — текущий VIP-уровень и оборот.
 - Валидация ставок:
   - только целое число;
   - между `MIN_BET` и `MAX_BET`;
   - не больше текущего баланса.
-- Централизованный логгер.
 - Поддержка запуска через **polling** (по умолчанию) и **webhook**.
 
-## Структура
+## Стек
 
-```text
-bot/
-  main.py
-  config.py
-  logger.py
-  handlers/
-    commands.py
-  services/
-    game.py
-    validation.py
-    wallet.py
-```
+- Основной рантайм бота: **aiogram**.
+- HTTP-сервер для webhook: **aiohttp**.
+- Конфигурация: **python-dotenv**.
+- Хранилище наград/VIP/миссий: SQLite (через `bot/db/schema.sql`).
 
 ## Локальный запуск (polling)
 
@@ -39,7 +35,7 @@ bot/
 pip install -r requirements.txt
 ```
 
-3. Подготовьте `.env` на основе примера:
+3. Подготовьте `.env`:
 
 ```bash
 cp .env.example .env
@@ -48,11 +44,11 @@ cp .env.example .env
 4. Заполните минимум:
 
 - `BOT_TOKEN`
-- `DB_URL`
+- `DB_URL` (например, `sqlite+aiosqlite:///./bot.db`)
 - `MIN_BET`
 - `MAX_BET`
 
-5. Запустите:
+5. Запустите бота:
 
 ```bash
 python -m bot.main
