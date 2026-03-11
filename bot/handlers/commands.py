@@ -2,6 +2,7 @@ import logging
 
 from aiogram import Router
 from aiogram.filters import Command
+from aiogram.filters.text import Text
 from aiogram.types import Message
 
 from bot.config import Settings
@@ -20,6 +21,17 @@ async def start_handler(message: Message) -> None:
         "Команды:\n"
         "/balance — показать баланс\n"
         "/spin <ставка> — сделать спин"
+    )
+
+
+@router.message(Text(text=["старт", "start"], ignore_case=True))
+async def text_start_handler(message: Message) -> None:
+    await message.answer(
+        "Привет! Это слот-бот.\n"
+        "Команды:\n"
+        "/balance — показать баланс\n"
+        "/spin <ставка> — сделать спин\n\n"
+        "Подсказка: основная команда запуска — /start"
     )
 
 
