@@ -1,15 +1,10 @@
-from .rewards import (
-    daily_command,
-    missions_command,
-    register_rewards_handlers,
-    rewards_command,
-    vip_command,
-)
+from aiogram import Router
 
-__all__ = [
-    "rewards_command",
-    "daily_command",
-    "missions_command",
-    "vip_command",
-    "register_rewards_handlers",
-]
+from .commands import router as commands_router
+from .rewards import router as rewards_router
+
+router = Router()
+router.include_router(commands_router)
+router.include_router(rewards_router)
+
+__all__ = ["router"]
