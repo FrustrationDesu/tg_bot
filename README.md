@@ -64,7 +64,9 @@ cp .env.example .env
 - `MIN_BET`
 - `MAX_BET`
 
-5. Запустите бота:
+5. Для запуска в polling-режиме убедитесь, что `WEBHOOK_URL` пустой или отсутствует в окружении.
+
+6. Запустите бота:
 
 ```bash
 python -m bot.main

@@ -44,12 +44,16 @@ def get_settings() -> Settings:
     if min_bet > max_bet:
         raise ConfigError("MIN_BET cannot be greater than MAX_BET")
 
+    webhook_url = os.getenv("WEBHOOK_URL") or None
+    if webhook_url and not webhook_url.startswith("https://"):
+        raise ConfigError("WEBHOOK_URL must start with 'https://' when set")
+
     return Settings(
         bot_token=bot_token,
         db_url=os.getenv("DB_URL", "sqlite+aiosqlite:///./bot.db"),
         min_bet=min_bet,
         max_bet=max_bet,
-        webhook_url=os.getenv("WEBHOOK_URL") or None,
+        webhook_url=webhook_url,
         webhook_path=os.getenv("WEBHOOK_PATH", "/webhook"),
         host=os.getenv("HOST", "0.0.0.0"),
         port=_to_int("PORT", 8080),

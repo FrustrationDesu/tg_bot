@@ -79,6 +79,13 @@ async def main() -> None:
     if settings.webhook_url:
         await start_webhook(bot, dp, settings)
     else:
+        webhook_info = await bot.get_webhook_info()
+        if webhook_info.url:
+            logger.warning(
+                "Webhook %s was configured previously; deleting before starting polling",
+                webhook_info.url,
+            )
+            await bot.delete_webhook(drop_pending_updates=False)
         await start_polling(bot, dp)
 
 
