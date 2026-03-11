@@ -30,6 +30,22 @@ bot/
     wallet.py
 ```
 
+## Зависимости
+
+### Обязательные
+
+Устанавливаются через `pip install -r requirements.txt`:
+
+- `aiogram` (v3) — основной фреймворк Telegram-бота (`Dispatcher`, `Router`, middleware).
+- `aiohttp` — HTTP-сервер для webhook-режима в `bot/main.py`.
+- `python-dotenv` — загрузка переменных окружения в `bot/config.py`.
+- `aiosqlite` — async-драйвер для `DB_URL=sqlite+aiosqlite:///...`.
+- `fastapi`, `uvicorn`, `sqlalchemy`, `alembic`, `psycopg[binary]`, `pydantic-settings`.
+
+### Опциональные
+
+- `python-telegram-bot` — нужен только если вы планируете использовать `bot/handlers/rewards.py` через helper `register_rewards_handlers(...)` (интеграция с `telegram.ext.CommandHandler`). В базовый запуск через `aiogram` этот пакет не входит.
+
 ## Локальный запуск (polling)
 
 1. Создайте и активируйте виртуальное окружение.
