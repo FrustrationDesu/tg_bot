@@ -157,6 +157,59 @@ class RewardsService:
             "SELECT * FROM wallet_transactions WHERE idempotency_key = ?", (idempotency_key,)
         ).fetchone()
 
+    def get_balance(self, user_id: int) -> float:
+        with self._connect() as conn:
+            user = conn.execute("SELECT wallet_balance FROM users WHERE id = ?", (user_id,)).fetchone()
+            if not user:
+                return 0.0
+            return float(user["wallet_balance"])
+
+    def process_spin(
+        self,
+        user_id: int,
+        bet_amount: int,
+        payout: int,
+        round_id: str,
+        symbol: str,
+        multiplier: float,
+    ) -> float:
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+
+            user = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+            if not user:
+                raise ValueError("User not found")
+
+            if float(user["wallet_balance"]) < bet_amount:
+                raise ValueError("Insufficient funds")
+
+            self._create_wallet_transaction(
+                conn=conn,
+                user_id=user_id,
+                amount=-float(bet_amount),
+                tx_type="spin_bet",
+                idempotency_key=f"spin:{round_id}:bet",
+                reference_type="spin_round",
+                reference_id=round_id,
+                metadata={"symbol": symbol, "multiplier": multiplier},
+            )
+            if payout > 0:
+                self._create_wallet_transaction(
+                    conn=conn,
+                    user_id=user_id,
+                    amount=float(payout),
+                    tx_type="spin_win",
+                    idempotency_key=f"spin:{round_id}:win",
+                    reference_type="spin_round",
+                    reference_id=round_id,
+                    metadata={"symbol": symbol, "multiplier": multiplier},
+                )
+
+            self._record_spins(conn, user_id=user_id, spins=1, total_bet_amount=float(bet_amount))
+            balance = conn.execute("SELECT wallet_balance FROM users WHERE id = ?", (user_id,)).fetchone()["wallet_balance"]
+            conn.commit()
+            return float(balance)
+
     def claim_daily_bonus(self, user_id: int, idempotency_key: str) -> tuple[bool, str, float]:
         now = self._now()
         today = now.date().isoformat()
@@ -274,38 +327,41 @@ class RewardsService:
         ).fetchone()
 
     def record_spins(self, user_id: int, spins: int, total_bet_amount: float) -> None:
+        with self._connect() as conn:
+            self._record_spins(conn, user_id=user_id, spins=spins, total_bet_amount=total_bet_amount)
+            conn.commit()
+
+    def _record_spins(self, conn: sqlite3.Connection, user_id: int, spins: int, total_bet_amount: float) -> None:
         now = self._now()
         period = now.date().isoformat()
-        with self._connect() as conn:
+        conn.execute(
+            """
+            UPDATE users
+            SET total_bet_turnover = total_bet_turnover + ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (total_bet_amount, self._as_iso(now), user_id),
+        )
+        missions = conn.execute(
+            "SELECT * FROM missions WHERE is_active = 1 AND objective_type = 'spins'"
+        ).fetchall()
+        for m in missions:
+            um = self._get_or_create_user_mission(conn, user_id, m["id"], period)
+            if um["reward_claimed_at"]:
+                continue
+            new_progress = um["progress"] + spins
+            completed_at = self._as_iso(now) if new_progress >= m["objective_target"] else None
             conn.execute(
                 """
-                UPDATE users
-                SET total_bet_turnover = total_bet_turnover + ?,
-                    updated_at = ?
+                UPDATE user_missions
+                SET progress = ?, completed_at = COALESCE(completed_at, ?), updated_at = ?
                 WHERE id = ?
                 """,
-                (total_bet_amount, self._as_iso(now), user_id),
+                (new_progress, completed_at, self._as_iso(now), um["id"]),
             )
-            missions = conn.execute(
-                "SELECT * FROM missions WHERE is_active = 1 AND objective_type = 'spins'"
-            ).fetchall()
-            for m in missions:
-                um = self._get_or_create_user_mission(conn, user_id, m["id"], period)
-                if um["reward_claimed_at"]:
-                    continue
-                new_progress = um["progress"] + spins
-                completed_at = self._as_iso(now) if new_progress >= m["objective_target"] else None
-                conn.execute(
-                    """
-                    UPDATE user_missions
-                    SET progress = ?, completed_at = COALESCE(completed_at, ?), updated_at = ?
-                    WHERE id = ?
-                    """,
-                    (new_progress, completed_at, self._as_iso(now), um["id"]),
-                )
 
-            self._update_user_vip_tier(conn, user_id)
-            conn.commit()
+        self._update_user_vip_tier(conn, user_id)
 
     def _update_user_vip_tier(self, conn: sqlite3.Connection, user_id: int) -> None:
         user = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
