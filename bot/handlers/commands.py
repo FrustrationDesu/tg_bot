@@ -7,6 +7,7 @@ from aiogram.types import Message
 
 from bot.config import Settings
 from bot.services.game import spin_slot
+from bot.services.presenter import SPIN_ACTION_KEYBOARD, render_spin_result
 from bot.services.validation import validate_bet
 from bot.services.rewards import RewardsService
 
@@ -84,8 +85,11 @@ async def spin_handler(message: Message, rewards: RewardsService, settings: Sett
     )
 
     await message.answer(
-        f"Выпало {result.symbol}\n"
-        f"Множитель: x{result.multiplier}\n"
-        f"Выплата: {payout}\n"
-        f"Новый баланс: {new_balance}"
+        render_spin_result(
+            reel_symbol=result.symbol,
+            payout=payout,
+            balance_before=current_balance,
+            balance_after=new_balance,
+        ),
+        reply_markup=SPIN_ACTION_KEYBOARD,
     )
