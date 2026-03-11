@@ -36,10 +36,10 @@ def test_spin_updates_db_balance_and_rewards_snapshot(tmp_path: Path):
         multiplier=2.5,
     )
 
-    assert before == 1000.0
-    assert after == 1150.0
-    assert rewards.get_balance(user_id) == 1150.0
-    assert rewards.get_rewards_snapshot(user_id)["balance"] == 1150.0
+    assert before == 1050.0
+    assert after == 1200.0
+    assert rewards.get_balance(user_id) == 1200.0
+    assert rewards.get_rewards_snapshot(user_id)["balance"] == 1200.0
 
 
 def test_spin_progresses_missions_and_turnover(tmp_path: Path):
@@ -80,3 +80,35 @@ def test_balance_matches_rewards_after_spin(tmp_path: Path):
     rewards_balance = float(rewards.get_rewards_snapshot(user_id)["balance"])
 
     assert balance_value == rewards_balance
+
+
+def test_new_user_start_bonus_daily_and_first_spin_flow(tmp_path: Path):
+    db_path = tmp_path / "flow.db"
+    rewards = RewardsService(str(db_path))
+    schema_sql = Path("bot/db/schema.sql").read_text(encoding="utf-8")
+    rewards.ensure_schema(schema_sql)
+    rewards.ensure_default_vip_tiers()
+    rewards.seed_missions()
+
+    user = rewards.get_or_create_user(telegram_id=999, username="newbie")
+    assert rewards.get_balance(user["id"]) == 50.0
+    assert rewards.has_welcome_bonus(999) is True
+
+    user_repeat = rewards.get_or_create_user(telegram_id=999, username="newbie")
+    assert user_repeat["id"] == user["id"]
+    assert rewards.get_balance(user["id"]) == 50.0
+
+    ok, _, daily_amount = rewards.claim_daily_bonus(user["id"], "daily:999:2024-01-01")
+    assert ok is True
+    assert daily_amount > 0
+
+    after = rewards.process_spin(
+        user_id=user["id"],
+        bet_amount=10,
+        payout=20,
+        round_id="round-first",
+        symbol="🍋",
+        multiplier=2.0,
+    )
+
+    assert after == 60.0 + daily_amount

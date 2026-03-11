@@ -15,12 +15,27 @@ router = Router()
 
 
 @router.message(Command("start"))
-async def start_handler(message: Message) -> None:
+async def start_handler(message: Message, rewards: RewardsService) -> None:
+    telegram_id = int(message.from_user.id)
+    username = getattr(message.from_user, "username", None)
+    user = rewards.get_or_create_user(telegram_id=telegram_id, username=username)
+    balance = rewards.get_balance(user["id"])
+    has_welcome = rewards.has_welcome_bonus(telegram_id)
+
+    cta = "🎁 Забрать ежедневный бонус: /daily"
+    if balance <= 0:
+        cta = "🆓 Получить стартовый бонус: /start"
+        if has_welcome:
+            cta = "🎁 Забрать ежедневный бонус: /daily"
+
     await message.answer(
         "Привет! Это слот-бот.\n"
+        f"Ваш баланс: {balance:.2f}\n\n"
         "Команды:\n"
         "/balance — показать баланс\n"
-        "/spin <ставка> — сделать спин"
+        "/spin <ставка> — сделать спин\n"
+        "/daily — ежедневный бонус\n\n"
+        f"{cta}"
     )
 
 
@@ -44,6 +59,25 @@ async def balance_handler(message: Message, rewards: RewardsService) -> None:
     await message.answer(f"Ваш баланс: {balance}")
 
 
+
+
+@router.message(F.text == "🎰 Спин")
+async def spin_button_handler(message: Message, rewards: RewardsService) -> None:
+    telegram_id = int(message.from_user.id)
+    username = getattr(message.from_user, "username", None)
+    user = rewards.get_or_create_user(telegram_id=telegram_id, username=username)
+    balance = rewards.get_balance(user["id"])
+
+    if balance <= 0:
+        await message.answer(
+            "Баланс пустой.\n"
+            "🆓 Получить стартовый бонус: /start\n"
+            "🎁 Забрать ежедневный бонус: /daily"
+        )
+        return
+
+    await message.answer("Введите ставку командой: /spin <ставка>")
+
 @router.message(Command("spin"))
 async def spin_handler(message: Message, rewards: RewardsService, settings: Settings) -> None:
     args = (message.text or "").split(maxsplit=1)
@@ -57,6 +91,9 @@ async def spin_handler(message: Message, rewards: RewardsService, settings: Sett
 
     is_valid, payload = validate_bet(raw_amount, settings.min_bet, settings.max_bet, current_balance)
     if not is_valid:
+        if current_balance <= 0:
+            await message.answer(f"{payload}\n\n🆓 Получить стартовый бонус: /start\n🎁 Забрать ежедневный бонус: /daily")
+            return
         await message.answer(payload)
         return
 

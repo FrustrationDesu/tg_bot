@@ -20,6 +20,7 @@ class RewardsService:
     def __init__(self, db_path: str, limits: RewardLimits | None = None) -> None:
         self.db_path = db_path
         self.limits = limits or RewardLimits()
+        self.welcome_bonus_amount = 50.0
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
@@ -70,21 +71,56 @@ class RewardsService:
     ) -> sqlite3.Row:
         now = self._as_iso(self._now())
         with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO users(telegram_id, username, device_fingerprint, last_ip, updated_at)
-                VALUES(?, ?, ?, ?, ?)
-                ON CONFLICT(telegram_id) DO UPDATE SET
-                    username = excluded.username,
-                    device_fingerprint = COALESCE(excluded.device_fingerprint, users.device_fingerprint),
-                    last_ip = COALESCE(excluded.last_ip, users.last_ip),
-                    updated_at = excluded.updated_at
-                """,
-                (telegram_id, username, device_fingerprint, ip, now),
-            )
+            conn.execute("BEGIN IMMEDIATE")
+            existing_user = conn.execute(
+                "SELECT id FROM users WHERE telegram_id = ?", (telegram_id,)
+            ).fetchone()
+            is_new_user = existing_user is None
+
+            if is_new_user:
+                conn.execute(
+                    """
+                    INSERT INTO users(telegram_id, username, device_fingerprint, last_ip, updated_at)
+                    VALUES(?, ?, ?, ?, ?)
+                    """,
+                    (telegram_id, username, device_fingerprint, ip, now),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE users
+                    SET username = ?,
+                        device_fingerprint = COALESCE(?, device_fingerprint),
+                        last_ip = COALESCE(?, last_ip),
+                        updated_at = ?
+                    WHERE telegram_id = ?
+                    """,
+                    (username, device_fingerprint, ip, now, telegram_id),
+                )
+
             user = conn.execute("SELECT * FROM users WHERE telegram_id = ?", (telegram_id,)).fetchone()
+            if is_new_user:
+                self._create_wallet_transaction(
+                    conn=conn,
+                    user_id=user["id"],
+                    amount=self.welcome_bonus_amount,
+                    tx_type="welcome_bonus",
+                    idempotency_key=f"welcome:{telegram_id}",
+                    reference_type="users",
+                    reference_id=str(user["id"]),
+                    metadata={"telegram_id": telegram_id},
+                )
+                user = conn.execute("SELECT * FROM users WHERE telegram_id = ?", (telegram_id,)).fetchone()
             conn.commit()
             return user
+
+    def has_welcome_bonus(self, telegram_id: int) -> bool:
+        with self._connect() as conn:
+            tx = conn.execute(
+                "SELECT id FROM wallet_transactions WHERE idempotency_key = ?",
+                (f"welcome:{telegram_id}",),
+            ).fetchone()
+            return tx is not None
 
     def run_multiaccount_heuristics(self, user_id: int, same_signal_limit: int = 3) -> bool:
         """Flag users sharing IP/device with many accounts as anti-abuse heuristic."""
